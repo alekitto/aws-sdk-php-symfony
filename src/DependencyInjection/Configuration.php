@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace Aws\Symfony\DependencyInjection;
 
 use Aws;
@@ -8,38 +10,14 @@ use Symfony\Component\Config\Definition\ConfigurationInterface;
 
 class Configuration implements ConfigurationInterface
 {
-    public function getConfigTreeBuilder()
+    public function getConfigTreeBuilder(): TreeBuilder
     {
-        // Maintain backwars compatibility, only merge when AWS_MERGE_CONFIG is set
-        $mergeConfig = getenv('AWS_MERGE_CONFIG') ?: false;
-        $treeType = 'variable';
-
-        if ($mergeConfig) {
-            $treeType = 'array';
-        }
-
-        // Most recent versions of TreeBuilder have a constructor
-        if (\method_exists(TreeBuilder::class, '__construct')) {
-            $treeBuilder = new TreeBuilder('aws', $treeType);
-        } else { // which is not the case for older versions
-            $treeBuilder = new TreeBuilder;
-            $treeBuilder->root('aws', $treeType);
-        }
-
-        // If not AWS_MERGE_CONFIG, return empty, variable TreeBuilder
-        if (!$mergeConfig) {
-            return $treeBuilder;
-        }
-
-        if (method_exists($treeBuilder, 'root')) {
-            $rootNode = $treeBuilder->root('aws');
-        } else {
-            $rootNode = $treeBuilder->getRootNode();
-        }
+        $treeBuilder = new TreeBuilder('aws', 'array');
+        $rootNode = $treeBuilder->getRootNode();
 
         // Define TreeBuilder to allow config validation and merging
         $rootNode
-            ->ignoreExtraKeys(false)
+            ->performNoDeepMerging()
             ->children()
                 ->variableNode('credentials')->end()
                 ->variableNode('debug')->end()

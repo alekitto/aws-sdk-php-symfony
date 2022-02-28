@@ -7,9 +7,12 @@ use Aws\AwsClient;
 use Aws\CodeDeploy\CodeDeployClient;
 use Aws\Lambda\LambdaClient;
 use Aws\S3\S3Client;
+use Aws\Sdk;
 use PHPUnit\Framework\TestCase;
+use Symfony\Component\Config\Definition\Exception\InvalidConfigurationException;
 use Symfony\Component\DependencyInjection\ContainerBuilder;
 use Symfony\Component\DependencyInjection\ContainerInterface;
+use Symfony\Component\DependencyInjection\Definition;
 use Symfony\Component\DependencyInjection\Reference;
 
 class AwsExtensionTest extends TestCase
@@ -24,7 +27,7 @@ class AwsExtensionTest extends TestCase
      */
     protected $container;
 
-    public function setUp()
+    protected function setUp(): void
     {
         $this->kernel = new AppKernel('test', true);
         $this->kernel->boot();
@@ -38,9 +41,9 @@ class AwsExtensionTest extends TestCase
     public function sdk_config_should_be_passed_directly_to_the_constructor_and_resolved_by_the_sdk()
     {
         $config           = $this->kernel->getTestConfig()['aws'];
-        $s3Region         = isset($config['S3']['region']) ? $config['S3']['region'] : $config['region'];
-        $lambdaRegion     = isset($config['Lambda']['region']) ? $config['Lambda']['region'] : $config['region'];
-        $codeDeployRegion = isset($config['CodeDeploy']['region']) ? $config['CodeDeploy']['region'] : $config['region'];
+        $s3Region         = $config['S3']['region'] ?? $config['region'];
+        $lambdaRegion     = $config['Lambda']['region'] ?? $config['region'];
+        $codeDeployRegion = $config['CodeDeploy']['region'] ?? $config['region'];
 
         $testService = $this->container->get('test_service');
 
@@ -75,25 +78,26 @@ class AwsExtensionTest extends TestCase
             'key' => '@@key',
             'secret' => '@@secret'
         ]];
+
         $container = $this->getMockBuilder(ContainerBuilder::class)
-            ->setMethods(['getDefinition', 'replaceArgument'])
+            ->onlyMethods(['getDefinition'])
             ->getMock();
+
+        $definition = new Definition(Sdk::class, [null]);
         $container->expects($this->once())
             ->method('getDefinition')
             ->with('aws_sdk')
-            ->willReturnSelf();
-        $container->expects($this->once())
-            ->method('replaceArgument')
-            ->with(0, $this->callback(function ($arg) {
-                return is_array($arg)
-                    && isset($arg['credentials'])
-                    && $arg['credentials'] === [
-                        'key' => '@key',
-                        'secret' => '@secret'
-                    ];
-            }));
+            ->willReturn($definition);
 
         $extension->load([$config], $container);
+
+        $defArgument = $definition->getArgument(0);
+        self::assertIsArray($defArgument);
+        self::assertArrayHasKey('credentials', $defArgument);
+        self::assertEquals([
+            'key' => '@key',
+            'secret' => '@secret'
+        ], $defArgument['credentials']);
     }
 
     /**
@@ -104,30 +108,29 @@ class AwsExtensionTest extends TestCase
         $extension = new AwsExtension;
         $config = ['credentials' => '@aws_sdk'];
         $container = $this->getMockBuilder(ContainerBuilder::class)
-            ->setMethods(['getDefinition', 'replaceArgument'])
+            ->onlyMethods(['getDefinition'])
             ->getMock();
+
+        $definition = new Definition(Sdk::class, [null]);
         $container->expects($this->once())
             ->method('getDefinition')
             ->with('aws_sdk')
-            ->willReturnSelf();
-        $container->expects($this->once())
-            ->method('replaceArgument')
-            ->with(0, $this->callback(function ($arg) {
-                return is_array($arg)
-                    && isset($arg['credentials'])
-                    && $arg['credentials'] instanceof Reference
-                    && (string) $arg['credentials'] === 'aws_sdk';
-            }));
+            ->willReturn($definition);
 
         $extension->load([$config], $container);
+
+        $defArgument = $definition->getArgument(0);
+        self::assertIsArray($defArgument);
+        self::assertArrayHasKey('credentials', $defArgument);
+        self::assertInstanceOf(Reference::class, $defArgument['credentials']);
+        self::assertEquals('aws_sdk', (string) $defArgument['credentials']);
     }
 
     /**
      * @test
      */
-    public function extension_should_validate_and_merge_configs()
+    public function extension_should_validate_and_not_merge_configs()
     {
-        putenv('AWS_MERGE_CONFIG=true');
         $extension = new AwsExtension;
         $config = [
             'credentials' => false,
@@ -158,7 +161,6 @@ class AwsExtensionTest extends TestCase
             ],
             'profile' => 'prod',
             'region' => 'us-west-2',
-            'retries' => 5,
             'scheme' => 'http',
             'signature_version' => 'v4',
             'ua_append' => [
@@ -181,39 +183,32 @@ class AwsExtensionTest extends TestCase
             'validate' => true,
         ];
         $container = $this->getMockBuilder(ContainerBuilder::class)
-            ->setMethods(['getDefinition', 'replaceArgument'])
+            ->onlyMethods(['getDefinition'])
             ->getMock();
+
+        $definition = new Definition(Sdk::class, [null]);
         $container->expects($this->once())
             ->method('getDefinition')
             ->with('aws_sdk')
-            ->willReturnSelf();
-        $container->expects($this->once())
-            ->method('replaceArgument')
-            ->with(0, $this->callback(function ($arg) {
-                return is_array($arg)
-                    && isset($arg['credentials'])
-                    && $arg['credentials'] instanceof Reference
-                    && (string) $arg['credentials'] === 'aws_sdk'
-                    && isset($arg['debug'])
-                    && (bool) $arg['debug'] === true
-                    && isset($arg['stats'])
-                    && (bool) $arg['stats'] === true
-                    && isset($arg['retries'])
-                    && (integer) $arg['retries'] === 5
-                    && isset($arg['endpoint'])
-                    && (string) $arg['endpoint'] === 'http://localhost:8000'
-                    && isset($arg['validate'])
-                    && (bool) $arg['validate'] === true
-                    && isset($arg['endpoint_discovery']['enabled'])
-                    && isset($arg['endpoint_discovery']['cache_limit'])
-                    && (bool) $arg['endpoint_discovery']['enabled'] === true
-                    && (integer) $arg['endpoint_discovery']['cache_limit'] === 1000
-                    && isset($arg['S3']['version'])
-                    && (string) $arg['S3']['version'] === '2006-03-01'
-                ;
-            }));
+            ->willReturn($definition);
 
         $extension->load([$config, $configDev], $container);
+
+        $defArgument = $definition->getArgument(0);
+        self::assertIsArray($defArgument);
+        self::assertArrayHasKey('credentials', $defArgument);
+        self::assertInstanceOf(Reference::class, $defArgument['credentials']);
+        self::assertEquals('aws_sdk', (string) $defArgument['credentials']);
+        self::assertArrayHasKey('debug', $defArgument);
+        self::assertTrue($defArgument['debug']);
+        self::assertArrayHasKey('stats', $defArgument);
+        self::assertTrue($defArgument['stats']);
+        self::assertArrayNotHasKey('retries', $defArgument);
+        self::assertArrayHasKey('validate', $defArgument);
+        self::assertTrue($defArgument['validate']);
+        self::assertArrayNotHasKey('endpoint', $defArgument);
+        self::assertArrayNotHasKey('endpoint_discovery', $defArgument);
+        self::assertArrayNotHasKey('S3', $defArgument);
     }
 
     /**
@@ -221,25 +216,15 @@ class AwsExtensionTest extends TestCase
      */
     public function extension_should_error_merging_unknown_config_options()
     {
-        putenv('AWS_MERGE_CONFIG=true');
         $extension = new AwsExtension;
         $config = [
             'foo' => 'bar'
         ];
-        $configDev = [
-            'foo' => 'baz'
-        ];
+
         $container = $this->getMockBuilder(ContainerBuilder::class)
-            ->setMethods(['getDefinition', 'replaceArgument'])
             ->getMock();
 
-        try {
-            $extension->load([$config, $configDev], $container);
-            $this->fail('Should have thrown an Error or RuntimeException');
-        } catch (\Exception $e) {
-            $this->assertTrue($e instanceof \RuntimeException);
-        } catch (\Throwable $e) {
-            $this->assertTrue($e instanceof \Error);
-        }
+        $this->expectException(InvalidConfigurationException::class);
+        $extension->load([$config], $container);
     }
 }

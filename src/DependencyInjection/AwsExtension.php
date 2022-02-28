@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace Aws\Symfony\DependencyInjection;
 
 use Aws;
@@ -15,13 +17,11 @@ use Symfony\Component\HttpKernel\Kernel;
 
 class AwsExtension extends Extension
 {
-    public function load(array $configs, ContainerBuilder $container)
+    public function load(array $configs, ContainerBuilder $container): void
     {
-        $loader = new YamlFileLoader(
-            $container,
-            new FileLocator(__DIR__ . '/../Resources/config')
-        );
-        $loader->load('services.yml');
+        $container->setParameter('aws_sdk.class', Aws\Sdk::class);
+        $container->register('aws_sdk', '%aws_sdk.class%')
+            ->setArguments([null]);
 
         $configuration = new Configuration();
         $config = $this->processConfiguration($configuration, $configs);
@@ -44,40 +44,31 @@ class AwsExtension extends Extension
     }
 
 
-    private function createServiceDefinition($name)
+    private function createServiceDefinition(string $name): Definition
     {
         $clientClass = "Aws\\{$name}\\{$name}Client";
         $serviceDefinition = new Definition(
             class_exists($clientClass) ? $clientClass : AwsClient::class
         );
 
-        // Handle Symfony >= 2.6
-        if (method_exists($serviceDefinition, 'setFactory')) {
-            return $serviceDefinition->setFactory([
-                new Reference('aws_sdk'),
-                'createClient',
-            ])->setArguments([$name]);
-        }
-
         return $serviceDefinition
-                ->setLazy(true)
-                ->setFactoryService('aws_sdk')
-                ->setFactoryMethod('createClient')
-                ->setArguments([$name]);
+            ->setLazy(true)
+            ->setFactory([new Reference('aws_sdk'), 'createClient'])
+            ->setArguments([$name]);
     }
 
-    private function inflateServicesInConfig(array &$config)
+    private function inflateServicesInConfig(array &$config): void
     {
         array_walk($config, function (&$value) {
             if (is_array($value)) {
                 $this->inflateServicesInConfig($value);
             }
 
-            if (is_string($value) && 0 === strpos($value, '@')) {
+            if (is_string($value) && str_starts_with($value, '@')) {
                 // this is either a service reference or a string meant to
                 // start with an '@' symbol. In any case, lop off the first '@'
                 $value = substr($value, 1);
-                if (0 !== strpos($value, '@')) {
+                if (! str_starts_with($value, '@')) {
                     // this is a service reference, not a string literal
                     $value = new Reference($value);
                 }
